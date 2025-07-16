@@ -293,6 +293,64 @@ def format_mcp_servers(servers):
     
     return ", ".join([f"{s['name']} ({s['status']})" for s in servers])
 
+def format_websearch_result(content):
+    """Format WebSearch tool results nicely"""
+    if not isinstance(content, str):
+        return str(content)
+    
+    lines = content.split('\n')
+    result = []
+    in_links_section = False
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # Detect the Links section
+        if stripped.startswith('Links: [{"title"'):
+            in_links_section = True
+            # Extract and parse the JSON array
+            json_start = stripped.find('[')
+            if json_start != -1:
+                json_str = stripped[json_start:]
+                try:
+                    import json
+                    links = json.loads(json_str)
+                    result.append(f"{colorize('🔗 Links:', '1;36')}")
+                    for i, link in enumerate(links, 1):
+                        title = link.get('title', 'Unknown')
+                        url = link.get('url', '')
+                        # Truncate very long titles
+                        if len(title) > 80:
+                            title = title[:77] + "..."
+                        result.append(f"  {colorize(f'{i}.', '1;33')} {colorize(title, '1;37')}")
+                        if url:
+                            result.append(f"     {colorize(url, '2;34')}")
+                    result.append("")  # Add spacing after links
+                    continue
+                except:
+                    # If JSON parsing fails, fall back to showing the line
+                    result.append(stripped)
+            continue
+        
+        # Skip empty lines in links section
+        if in_links_section and not stripped:
+            in_links_section = False
+            continue
+            
+        # Format regular content
+        if stripped:
+            # Highlight section headers
+            if stripped.startswith('## '):
+                result.append(f"{colorize(stripped, '1;35')}")
+            elif stripped.startswith('# '):
+                result.append(f"{colorize(stripped, '1;36')}")
+            elif stripped.endswith(':') and len(stripped) < 50:
+                result.append(f"{colorize(stripped, '1;33')}")
+            else:
+                result.append(stripped)
+    
+    return '\n'.join(result)
+
 def parse_and_display(line):
     """Parse a single JSON line and display it formatted"""
     try:
@@ -522,9 +580,15 @@ def parse_and_display(line):
                                             for line in text.split('\n'):
                                                 print(f"    {line}")
                                     except:
-                                        # Not JSON, show full content
-                                        for line in text.split('\n'):
-                                            print(f"    {line}")
+                                        # Not JSON, check if it's a WebSearch result
+                                        if "Web search results for query:" in text and "Links: [" in text:
+                                            formatted_search = format_websearch_result(text)
+                                            for line in formatted_search.split('\n'):
+                                                print(f"    {line}")
+                                        else:
+                                            # Show full content
+                                            for line in text.split('\n'):
+                                                print(f"    {line}")
                                 else:
                                     # Other content types
                                     print(f"    {item}")
@@ -535,17 +599,26 @@ def parse_and_display(line):
                                 print(f"    {line}")
                         else:
                             # Handle string content
-                            if len(str(result_content)) > 800:
-                                # Show beginning and end
-                                lines = str(result_content).split('\n')
-                                if len(lines) > 20:
-                                    show_lines = lines[:10] + ['    ...'] + lines[-5:]
-                                    result_content = '\n'.join(show_lines)
-                                else:
-                                    result_content = str(result_content)[:800] + "..."
+                            content_str = str(result_content)
                             
-                            for line in str(result_content).split('\n'):
-                                print(f"    {line}")
+                            # Check if it's a WebSearch result
+                            if "Web search results for query:" in content_str and "Links: [" in content_str:
+                                formatted_search = format_websearch_result(content_str)
+                                for line in formatted_search.split('\n'):
+                                    print(f"    {line}")
+                            else:
+                                # Regular string content handling
+                                if len(content_str) > 800:
+                                    # Show beginning and end
+                                    lines = content_str.split('\n')
+                                    if len(lines) > 20:
+                                        show_lines = lines[:10] + ['    ...'] + lines[-5:]
+                                        content_str = '\n'.join(show_lines)
+                                    else:
+                                        content_str = content_str[:800] + "..."
+                                
+                                for line in content_str.split('\n'):
+                                    print(f"    {line}")
         
         elif msg_type == "result":
             # Final result of the prompt
