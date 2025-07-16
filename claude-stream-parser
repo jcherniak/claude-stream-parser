@@ -1,0 +1,628 @@
+#!/usr/bin/env python3
+
+import json
+import sys
+from datetime import datetime
+import re
+
+def colorize(text, color_code, bold=False):
+    """Add ANSI color codes if output is to terminal"""
+    if sys.stdout.isatty():
+        if bold:
+            # Add bold (1;) to the color code
+            if ';' in color_code:
+                # Already has formatting, ensure bold is included
+                parts = color_code.split(';')
+                if '1' not in parts:
+                    color_code = '1;' + color_code
+            else:
+                # Simple color code, add bold
+                color_code = '1;' + color_code
+        return f"\033[{color_code}m{text}\033[0m"
+    return text
+
+def format_todos(todos):
+    """Format todo list in a more readable way"""
+    if not todos or not isinstance(todos, list):
+        return str(todos)
+    
+    result = []
+    for i, todo in enumerate(todos):
+        if isinstance(todo, dict):
+            status = todo.get("status", "unknown")
+            priority = todo.get("priority", "medium")
+            content = todo.get("content", "")
+            todo_id = todo.get("id", str(i+1))
+            
+            # Status emoji
+            status_emoji = {
+                "pending": "⏳",
+                "in_progress": "🔄", 
+                "completed": "✅",
+                "blocked": "🚫"
+            }.get(status, "❓")
+            
+            # Priority color (simplified for text)
+            priority_marker = {
+                "high": "🔴",
+                "medium": "🟡", 
+                "low": "🟢"
+            }.get(priority, "⚪")
+            
+            result.append(f"{status_emoji} [{todo_id}] {priority_marker} {content}")
+        else:
+            result.append(f"  {todo}")
+    
+    return "\n".join(result)
+
+def format_json_nicely(data, max_length=500, tool_name=None, no_truncate=False):
+    """Format JSON data nicely with proper indentation"""
+    try:
+        if isinstance(data, str):
+            return data
+            
+        # Special handling for TodoWrite
+        if tool_name == "TodoWrite" and isinstance(data, dict) and "todos" in data:
+            todos = data["todos"]
+            return format_todos(todos)
+        
+        # Special handling for thinking tools
+        if tool_name and "think" in tool_name.lower() and isinstance(data, dict):
+            thought = data.get("thought", "")
+            thought_num = data.get("thoughtNumber", "?")
+            total = data.get("totalThoughts", "?")
+            next_needed = data.get("nextThoughtNeeded", False)
+            
+            result = f"{colorize(f'💭 Thought {thought_num}/{total}:', '1;36')}\n"
+            # Format thought text with proper indentation
+            for line in thought.split('\n'):
+                result += f"  {line}\n"
+            if next_needed:
+                result += f"\n  {colorize('→ Continuing analysis...', '2;36')}"
+            return result.rstrip()
+        
+        # Special handling for OpenRouter and Gemini tools (they share the same tools) - NEVER TRUNCATE
+        if tool_name and ("openrouter" in tool_name.lower() or "gemini" in tool_name.lower()) and isinstance(data, dict):
+            # Extract common fields
+            model = data.get("model", "default")
+            thinking_mode = data.get("thinking_mode", "")
+            temperature = data.get("temperature", "")
+            files = data.get("files", [])
+            
+            # Different formatting based on the specific tool
+            if "thinkdeep" in tool_name:
+                current = data.get("current_analysis", "")
+                context = data.get("problem_context", "")
+                focus = data.get("focus_areas", [])
+                
+                result = f"{colorize('🧠 Deep Analysis Request:', '1;35')}\n"
+                result += f"Model: {colorize(model, '2;37')} | Mode: {colorize(thinking_mode or 'default', '2;36')}"
+                if temperature:
+                    result += f" | Temp: {temperature}"
+                result += "\n"
+                
+                if files:
+                    result += f"Files: {colorize(str(len(files)), '1;33')} files\n"
+                    for f in files[:5]:  # Show first 5 files
+                        result += f"  • {f}\n"
+                    if len(files) > 5:
+                        result += f"  • ... and {len(files) - 5} more\n"
+                
+                if context:
+                    result += f"{colorize('Context:', '2;37')}\n"
+                    # Show full context without truncation
+                    for line in context.split('\n'):
+                        result += f"  {line}\n"
+                if current:
+                    result += f"{colorize('Current Analysis:', '2;37')}\n"
+                    # Show full analysis without truncation
+                    for line in current.split('\n'):
+                        result += f"  {line}\n"
+                if focus:
+                    result += f"Focus Areas: {', '.join(focus)}\n"
+                return result.rstrip()
+            
+            elif "codereview" in tool_name or "debug" in tool_name or "analyze" in tool_name:
+                result = f"{colorize('🔍 ' + tool_name.split('__')[-1].title() + ':', '1;35')}\n"
+                result += f"Model: {colorize(model, '2;37')} | Mode: {colorize(thinking_mode or 'default', '2;36')}"
+                if temperature:
+                    result += f" | Temp: {temperature}"
+                result += "\n"
+                
+                if files:
+                    result += f"Files: {colorize(str(len(files)), '1;33')} files\n"
+                    for f in files[:5]:
+                        result += f"  • {f}\n"
+                    if len(files) > 5:
+                        result += f"  • ... and {len(files) - 5} more\n"
+                
+                # Add specific fields based on tool type
+                if "codereview" in tool_name:
+                    review_type = data.get("review_type", "full")
+                    severity = data.get("severity_filter", "all")
+                    result += f"Review Type: {review_type} | Severity: {severity}\n"
+                elif "debug" in tool_name:
+                    error = data.get("error_description", "")
+                    if error:
+                        result += f"Error: {error[:100]}...\n" if len(error) > 100 else f"Error: {error}\n"
+                
+                context = data.get("context", "") or data.get("question", "")
+                if context:
+                    result += f"{colorize('Context:', '2;37')}\n"
+                    # Show full context without truncation
+                    for line in context.split('\n'):
+                        result += f"  {line}\n"
+                
+                return result.rstrip()
+            
+            elif "chat" in tool_name:
+                prompt = data.get("prompt", "")
+                result = f"{colorize('💬 Chat Request:', '1;35')}\n"
+                result += f"Model: {colorize(model, '2;37')} | Mode: {colorize(thinking_mode or 'default', '2;36')}"
+                if temperature:
+                    result += f" | Temp: {temperature}"
+                result += "\n"
+                
+                if files:
+                    result += f"Files: {colorize(str(len(files)), '1;33')} files provided\n"
+                
+                result += f"{colorize('Prompt:', '2;37')}\n"
+                # Show full prompt without truncation
+                for line in prompt.split('\n'):
+                    result += f"  {line}\n"
+                return result
+            
+            # Default OpenRouter formatting with basic info
+            result = f"{colorize('🤖 OpenRouter:' + tool_name.split('__')[-1], '1;35')}\n"
+            result += f"Model: {colorize(model, '2;37')}"
+            if thinking_mode:
+                result += f" | Mode: {colorize(thinking_mode, '2;36')}"
+            result += "\n"
+            if files:
+                result += f"Files: {len(files)} files\n"
+            result += json.dumps(data, indent=2, ensure_ascii=False)[:500]
+            return result
+        
+        # Special handling for Task tool
+        if tool_name == "Task" and isinstance(data, dict):
+            desc = data.get("description", "")
+            prompt = data.get("prompt", "")
+            result = f"{colorize('📋 Task:', '1;33')} {desc}\n"
+            result += f"{colorize('Prompt:', '2;33')}\n"
+            # Show more of the prompt for Task tool
+            if len(prompt) > 500:
+                # Show first 400 chars and last 100 chars
+                result += f"{prompt[:400]}\n...\n{prompt[-100:]}"
+            else:
+                result += prompt
+            return result
+        
+        formatted = json.dumps(data, indent=2, ensure_ascii=False)
+        
+        if len(formatted) > max_length:
+            # Try to show meaningful parts
+            lines = formatted.split('\n')
+            if len(lines) > 10:
+                # Show first few and last few lines
+                show_lines = lines[:5] + ['    ...'] + lines[-3:]
+                formatted = '\n'.join(show_lines)
+            else:
+                formatted = formatted[:max_length] + "..."
+        
+        return formatted
+    except:
+        return str(data)
+
+def format_message_content(content):
+    """Format message content array into readable text"""
+    if not content:
+        return ""
+    
+    parts = []
+    for item in content:
+        if item.get("type") == "text":
+            text = item.get("text", "")
+            if text:
+                parts.append(text)
+        elif item.get("type") == "tool_use":
+            tool_name = item.get("name", "unknown")
+            tool_id = item.get("id", "")[:12]
+            inputs = item.get("input", {})
+            
+            # Format tool name with proper spacing
+            if parts and not parts[-1].endswith('\n'):
+                parts.append('\n')
+            
+            # Clean up tool names for display
+            display_name = tool_name
+            if tool_name.startswith("mcp__"):
+                # Format MCP tool names better
+                parts_split = tool_name.split("__")
+                if len(parts_split) >= 3:
+                    provider = parts_split[1].title()
+                    action = parts_split[2]
+                    display_name = f"{provider}::{action}"
+            
+            parts.append(f"\n🔧 Tool Call: {colorize(display_name, '1;35')} [{tool_id}...]")
+            
+            if inputs:
+                # Never truncate OpenRouter/Gemini tool inputs - show full content
+                max_len = 10000 if tool_name and ("openrouter" in tool_name.lower() or "gemini" in tool_name.lower()) else 2000
+                formatted_input = format_json_nicely(inputs, max_length=max_len, tool_name=tool_name)
+                parts.append(f"\n   📥 Input:")
+                for line in formatted_input.split('\n'):
+                    parts.append(f"\n      {line}")
+            parts.append('\n')
+    
+    return "".join(parts)
+
+def format_tools_list(tools):
+    """Format the tools list more readably"""
+    if not tools:
+        return "None"
+    
+    # Group MCP tools
+    mcp_tools = [t for t in tools if t.startswith("mcp__")]
+    regular_tools = [t for t in tools if not t.startswith("mcp__")]
+    
+    result = []
+    if regular_tools:
+        result.append(f"Regular: {', '.join(regular_tools)}")
+    
+    if mcp_tools:
+        # Group by server
+        servers = {}
+        for tool in mcp_tools:
+            parts = tool.split("__")
+            if len(parts) >= 2:
+                server = parts[1]
+                tool_name = "__".join(parts[2:]) if len(parts) > 2 else "main"
+                if server not in servers:
+                    servers[server] = []
+                servers[server].append(tool_name)
+        
+        for server, server_tools in servers.items():
+            result.append(f"MCP {server}: {', '.join(server_tools)}")
+    
+    return "\n    ".join(result)
+
+def format_mcp_servers(servers):
+    """Format MCP servers list"""
+    if not servers:
+        return "None"
+    
+    return ", ".join([f"{s['name']} ({s['status']})" for s in servers])
+
+def parse_and_display(line):
+    """Parse a single JSON line and display it formatted"""
+    try:
+        data = json.loads(line.strip())
+        
+        msg_type = data.get("type", "unknown")
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        
+        if msg_type == "system":
+            subtype = data.get("subtype", "")
+            if subtype == "init":
+                print(f"\n{colorize('🚀 SYSTEM INIT', '1;36')} [{timestamp}]")
+                print(f"  Session: {data.get('session_id', 'unknown')[:8]}...")
+                print(f"  Working Dir: {data.get('cwd', 'unknown')}")
+                print(f"  Model: {data.get('model', 'unknown')}")
+                print(f"  Permission Mode: {data.get('permissionMode', 'unknown')}")
+                
+                servers = data.get("mcp_servers", [])
+                print(f"  MCP Servers: {format_mcp_servers(servers)}")
+            else:
+                print(f"\n{colorize('⚙️ SYSTEM', '1;33')} [{timestamp}] {subtype}")
+                print(f"  {data}")
+                
+        elif msg_type == "assistant":
+            message = data.get("message", {})
+            content = message.get("content", [])
+            model = message.get("model", "unknown")
+            msg_id = message.get("id", "unknown")[:8]
+            
+            print(f"\n{colorize('🤖 ASSISTANT', '1;32')} [{timestamp}] ({model}) [{msg_id}...]")
+            
+            text_content = format_message_content(content)
+            if text_content.strip():
+                # Split into lines and indent
+                for line in text_content.strip().split('\n'):
+                    print(f"  {line}")
+            
+            # Show usage if available
+            usage = message.get("usage", {})
+            if usage:
+                input_tokens = usage.get("input_tokens", 0)
+                output_tokens = usage.get("output_tokens", 0)
+                cache_read = usage.get("cache_read_input_tokens", 0)
+                cache_create = usage.get("cache_creation_input_tokens", 0)
+                
+                tokens_info = f"in:{input_tokens} out:{output_tokens}"
+                if cache_read:
+                    tokens_info += f" cache_read:{cache_read}"
+                if cache_create:
+                    tokens_info += f" cache_create:{cache_create}"
+                
+                print(f"  {colorize(f'📊 Tokens: {tokens_info}', '2;37')}")
+                
+        elif msg_type == "user":
+            message = data.get("message", {})
+            content = message.get("content", [])
+            
+            print(f"\n{colorize('👤 USER', '1;34')} [{timestamp}]")
+            
+            # Check for tool results
+            tool_results = [item for item in content if item.get("type") == "tool_result"]
+            text_content = [item for item in content if item.get("type") == "text"]
+            
+            if text_content:
+                for item in text_content:
+                    text = item.get("text", "")
+                    for line in text.split('\n'):
+                        print(f"  {line}")
+            
+            if tool_results:
+                for result in tool_results:
+                    tool_id = result.get("tool_use_id", "unknown")[:12]
+                    result_content = result.get("content", "")
+                    is_error = result.get("is_error", False)
+                    
+                    if is_error:
+                        print(f"  {colorize(f'❌ Tool Error [{tool_id}...]:', '1;31')}")
+                        # Special handling for permission errors
+                        if isinstance(result_content, str) and "requested permissions" in result_content:
+                            print(f"    {colorize('Permission required for tool use', '1;33')}")
+                        else:
+                            # Format the error content
+                            if isinstance(result_content, str):
+                                for line in result_content.split('\n'):
+                                    print(f"    {line}")
+                            else:
+                                formatted_content = format_json_nicely(result_content, max_length=800)
+                                for line in formatted_content.split('\n'):
+                                    print(f"    {line}")
+                    else:
+                        print(f"  {colorize(f'📤 Tool Result [{tool_id}...]:', '1;32')}")
+                        
+                        # Format the result content nicely
+                        if isinstance(result_content, list) and len(result_content) > 0 and isinstance(result_content[0], dict) and result_content[0].get("type") == "text":
+                            # Handle list of content items (like tool results)
+                            for item in result_content:
+                                if isinstance(item, dict) and item.get("type") == "text":
+                                    text = item.get("text", "")
+                                    # Try to parse as JSON for OpenRouter/Gemini responses
+                                    try:
+                                        parsed = json.loads(text)
+                                        if "status" in parsed:
+                                            status = parsed.get('status')
+                                            status_color = '1;32' if status == 'success' else '1;33' if 'continuation' in status else '1;31'
+                                            print(f"    {colorize('Status:', '1;37')} {colorize(status, status_color, bold=True)}")
+                                            
+                                            if parsed.get("content"):
+                                                content = parsed.get("content")
+                                                content_type = parsed.get("content_type", "text")
+                                                
+                                                if content_type == "markdown":
+                                                    # Extract meaningful parts from markdown content
+                                                    lines = content.split('\n')
+                                                    in_json_block = False
+                                                    json_content = []
+                                                    
+                                                    for line in lines:
+                                                        if line.strip() == '```json':
+                                                            in_json_block = True
+                                                            json_content = []
+                                                            continue
+                                                        elif line.strip() == '```' and in_json_block:
+                                                            # Try to parse the JSON first
+                                                            parsed_successfully = False
+                                                            try:
+                                                                json_obj = json.loads('\n'.join(json_content))
+                                                                parsed_successfully = True
+                                                                
+                                                                # Display parsed content instead of raw JSON
+                                                                if json_obj.get("status") == "requires_clarification":
+                                                                    print(f"      {colorize('⚠️  Status: requires_clarification', '1;33', bold=True)}")
+                                                                    if json_obj.get("question"):
+                                                                        print(f"      {colorize('Question:', '1;33')} {json_obj['question']}")
+                                                                    if json_obj.get("files_needed"):
+                                                                        print(f"      {colorize('Files needed:', '1;33')}")
+                                                                        for f in json_obj["files_needed"]:
+                                                                            print(f"        • {f}")
+                                                                elif json_obj.get("status"):
+                                                                    status = json_obj.get("status")
+                                                                    status_color = '1;32' if status == "success" else '1;31' if status == "error" else '1;33'
+                                                                    print(f"      {colorize(f'Status: {status}', status_color, bold=True)}")
+                                                                    if json_obj.get("message"):
+                                                                        print(f"      {json_obj['message']}")
+                                                                else:
+                                                                    # For other JSON content, show it formatted
+                                                                    formatted = format_json_nicely(json_obj, max_length=1000)
+                                                                    for l in formatted.split('\n'):
+                                                                        print(f"      {l}")
+                                                            except:
+                                                                parsed_successfully = False
+                                                            
+                                                            # Only show raw JSON if parsing failed
+                                                            if not parsed_successfully:
+                                                                print("      ```json")
+                                                                for jline in json_content:
+                                                                    print(f"      {jline}")
+                                                                print("      ```")
+                                                            
+                                                            in_json_block = False
+                                                            json_content = []
+                                                        elif in_json_block:
+                                                            json_content.append(line)
+                                                        elif line.strip() and not line.startswith('==') and not line.startswith('---') and not line.strip().startswith('**Claude') and not (line.strip().startswith('```') or line.strip().endswith('```')):
+                                                            # Check if this line is a standalone JSON object
+                                                            if line.strip().startswith('{') and line.strip().endswith('}'):
+                                                                try:
+                                                                    json_obj = json.loads(line.strip())
+                                                                    # Successfully parsed as JSON
+                                                                    if json_obj.get("status") == "requires_clarification":
+                                                                        print(f"      {colorize('⚠️  Status: requires_clarification', '1;33', bold=True)}")
+                                                                        if json_obj.get("question"):
+                                                                            print(f"      {colorize('Question:', '1;33')} {json_obj['question']}")
+                                                                        if json_obj.get("files_needed"):
+                                                                            print(f"      {colorize('Files needed:', '1;33')}")
+                                                                            for f in json_obj["files_needed"]:
+                                                                                print(f"        • {f}")
+                                                                    elif json_obj.get("status"):
+                                                                        status = json_obj.get("status")
+                                                                        status_color = '1;32' if status == "success" else '1;31' if status == "error" else '1;33'
+                                                                        print(f"      {colorize(f'Status: {status}', status_color, bold=True)}")
+                                                                        if json_obj.get("message"):
+                                                                            print(f"      {json_obj['message']}")
+                                                                    else:
+                                                                        # Other JSON content - show formatted
+                                                                        formatted = format_json_nicely(json_obj, max_length=1000)
+                                                                        for l in formatted.split('\n'):
+                                                                            print(f"      {l}")
+                                                                except:
+                                                                    # Not valid JSON, show as regular line
+                                                                    print(f"      {line.strip()}")
+                                                            else:
+                                                                # Show non-separator lines, skip Claude's turn indicator and stray backticks
+                                                                print(f"      {line.strip()}")
+                                                else:
+                                                    # Parse nested JSON if present
+                                                    try:
+                                                        nested = json.loads(content)
+                                                        formatted = format_json_nicely(nested, max_length=1000)
+                                                        for line in formatted.split('\n'):
+                                                            print(f"      {line}")
+                                                    except:
+                                                        # Not nested JSON, show full content with proper indentation
+                                                        for line in content.split('\n'):
+                                                            if line.strip():
+                                                                print(f"      {line}")
+                                            
+                                            # Show continuation offer if available
+                                            if parsed.get("continuation_offer"):
+                                                offer = parsed["continuation_offer"]
+                                                print(f"    {colorize('Continuation available:', '1;36')} ID: {offer.get('continuation_id', 'N/A')[:12]}...")
+                                                if offer.get("remaining_turns"):
+                                                    print(f"      Remaining turns: {offer['remaining_turns']}")
+                                            
+                                            if parsed.get("metadata"):
+                                                print(f"    {colorize('Metadata:', '2;37')}")
+                                                meta = parsed.get("metadata", {})
+                                                if meta.get("original_request"):
+                                                    req = meta["original_request"]
+                                                    if req.get("model"):
+                                                        print(f"      Model: {req['model']}")
+                                                    if req.get("thinking_mode"):
+                                                        print(f"      Mode: {req['thinking_mode']}")
+                                                    if req.get("files"):
+                                                        print(f"      Files: {len(req['files'])} files")
+                                        else:
+                                            # Not a structured response, show full text
+                                            for line in text.split('\n'):
+                                                print(f"    {line}")
+                                    except:
+                                        # Not JSON, show full content
+                                        for line in text.split('\n'):
+                                            print(f"    {line}")
+                                else:
+                                    # Other content types
+                                    print(f"    {item}")
+                        elif isinstance(result_content, (dict, list)):
+                            # Generic dict/list handling
+                            formatted_content = format_json_nicely(result_content, max_length=800)
+                            for line in formatted_content.split('\n'):
+                                print(f"    {line}")
+                        else:
+                            # Handle string content
+                            if len(str(result_content)) > 800:
+                                # Show beginning and end
+                                lines = str(result_content).split('\n')
+                                if len(lines) > 20:
+                                    show_lines = lines[:10] + ['    ...'] + lines[-5:]
+                                    result_content = '\n'.join(show_lines)
+                                else:
+                                    result_content = str(result_content)[:800] + "..."
+                            
+                            for line in str(result_content).split('\n'):
+                                print(f"    {line}")
+        
+        elif msg_type == "result":
+            # Final result of the prompt
+            is_error = data.get("is_error", False)
+            duration_ms = data.get("duration_ms", 0)
+            duration_api_ms = data.get("duration_api_ms", 0)
+            num_turns = data.get("num_turns", 0)
+            total_cost = data.get("total_cost_usd", 0)
+            result_text = data.get("result", "")
+            session_id = data.get("session_id", "unknown")
+            
+            # Token usage
+            usage = data.get("usage", {})
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+            cache_read = usage.get("cache_read_input_tokens", 0)
+            cache_create = usage.get("cache_creation_input_tokens", 0)
+            
+            # Print separator
+            print(f"\n{colorize('═' * 60, '1;36')}")
+            print(f"{colorize('🎯 FINAL RESULT', '1;36')} [{timestamp}]")
+            print(f"{colorize('═' * 60, '1;36')}")
+            
+            # Status
+            if is_error:
+                print(f"\n{colorize('❌ Status: ERROR', '1;31')}")
+            else:
+                print(f"\n{colorize('✅ Status: SUCCESS', '1;32')}")
+            
+            # Metrics
+            print(f"⏱️  Duration: {duration_ms/1000:.1f}s (API: {duration_api_ms/1000:.1f}s)")
+            print(f"💬 Conversation Turns: {num_turns}")
+            print(f"💰 Total Cost: ${total_cost:.2f} USD")
+            
+            # Token usage
+            print(f"\n📊 Token Usage:")
+            print(f"   Input: {input_tokens:,}")
+            if cache_read:
+                print(f"   Cache Read: {cache_read:,}")
+            if cache_create:
+                print(f"   Cache Created: {cache_create:,}")
+            print(f"   Output: {output_tokens:,}")
+            print(f"   Session: {session_id}")
+            
+            # Result text - use bold green for RESULT header
+            print(f"\n{colorize('📝 RESULT:', '1;32;1')}")
+            print(f"{colorize('═' * 60, '1;32')}")
+            # Print result text in green
+            for line in result_text.split('\n'):
+                print(colorize(line, '1;32'))
+            print(f"{colorize('═' * 60, '1;32')}")
+            
+        else:
+            # Unknown message type
+            print(f"\n{colorize(f'❓ {msg_type.upper()}', '1;31')} [{timestamp}]")
+            print(f"  {data}")
+            
+    except json.JSONDecodeError as e:
+        print(f"{colorize('❌ JSON Parse Error:', '1;31')} {e}")
+        print(f"  Line: {line[:100]}...")
+    except Exception as e:
+        print(f"{colorize('❌ Error:', '1;31')} {e}")
+
+def main():
+    """Main function to read from stdin and process each line"""
+    print(f"{colorize('📡 Claude Stream Parser', '1;36')} - Reading from stdin...")
+    print(f"{colorize('═' * 60, '2;37')}")
+    
+    try:
+        for line in sys.stdin:
+            if line.strip():  # Skip empty lines
+                parse_and_display(line)
+                
+    except KeyboardInterrupt:
+        print(f"\n\n{colorize('👋 Interrupted by user', '1;33')}")
+    except Exception as e:
+        print(f"\n{colorize('❌ Fatal error:', '1;31')} {e}")
+
+if __name__ == "__main__":
+    main()
