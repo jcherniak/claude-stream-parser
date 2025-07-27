@@ -243,15 +243,63 @@ def format_message_content(content):
                     action = parts_split[2]
                     display_name = f"{provider}::{action}"
             
-            parts.append(f"\n🔧 Tool Call: {colorize(display_name, '1;35')} [{tool_id}...]")
-            
-            if inputs:
-                # Never truncate OpenRouter/Gemini tool inputs - show full content
-                max_len = 10000 if tool_name and ("openrouter" in tool_name.lower() or "gemini" in tool_name.lower()) else 2000
-                formatted_input = format_json_nicely(inputs, max_length=max_len, tool_name=tool_name)
-                parts.append(f"\n   📥 Input:")
-                for line in formatted_input.split('\n'):
-                    parts.append(f"\n      {line}")
+            # Format tool call based on tool type
+            if tool_name == "Bash":
+                # Special inline formatting for Bash commands
+                command = inputs.get("command", "")
+                desc = inputs.get("description", "")
+                if command:
+                    # Truncate very long commands
+                    if len(command) > 150:
+                        command = command[:147] + "..."
+                    parts.append(f"\n🔧 {colorize('Bash', '1;35')}: {colorize(command, '1;37')}")
+                    if desc:
+                        parts.append(f" {colorize(f'# {desc}', '2;37')}")
+                else:
+                    parts.append(f"\n🔧 Tool Call: {colorize(display_name, '1;35')} [{tool_id}...]")
+            elif tool_name in ["Read", "Write", "Edit", "MultiEdit", "Grep", "Glob", "LS"]:
+                # File operation tools - show key info inline
+                parts.append(f"\n🔧 {colorize(tool_name, '1;35')}")
+                if tool_name in ["Read", "Write", "LS"]:
+                    file_path = inputs.get("file_path") or inputs.get("path", "")
+                    if file_path:
+                        parts.append(f": {colorize(file_path, '1;36')}")
+                elif tool_name == "Edit" or tool_name == "MultiEdit":
+                    file_path = inputs.get("file_path", "")
+                    if file_path:
+                        parts.append(f": {colorize(file_path, '1;36')}")
+                elif tool_name == "Grep":
+                    pattern = inputs.get("pattern", "")
+                    path = inputs.get("path", ".")
+                    if pattern:
+                        parts.append(f": {colorize(repr(pattern), '1;33')} in {colorize(path, '1;36')}")
+                elif tool_name == "Glob":
+                    pattern = inputs.get("pattern", "")
+                    if pattern:
+                        parts.append(f": {colorize(pattern, '1;33')}")
+            elif tool_name == "TodoWrite":
+                # Show todo count inline
+                todos = inputs.get("todos", [])
+                parts.append(f"\n🔧 {colorize('TodoWrite', '1;35')}: {len(todos)} items")
+            elif tool_name and "think" in tool_name.lower():
+                # Thinking tools - show thought preview
+                thought = inputs.get("thought", "")
+                if thought and len(thought) > 80:
+                    thought = thought[:77] + "..."
+                parts.append(f"\n🧠 {colorize(display_name, '1;35')}: {colorize(thought, '2;37')}")
+            else:
+                # Default formatting with better structure
+                parts.append(f"\n🔧 {colorize(display_name, '1;35')} [{tool_id}...]")
+                
+                if inputs:
+                    # Never truncate OpenRouter/Gemini tool inputs - show full content
+                    max_len = 10000 if tool_name and ("openrouter" in tool_name.lower() or "gemini" in tool_name.lower()) else 2000
+                    formatted_input = format_json_nicely(inputs, max_length=max_len, tool_name=tool_name)
+                    # Only show input section if there's meaningful content
+                    if formatted_input.strip() and formatted_input != "{}":
+                        parts.append(f"\n   📥 Input:")
+                        for line in formatted_input.split('\n'):
+                            parts.append(f"\n      {line}")
             parts.append('\n')
     
     return "".join(parts)
@@ -441,10 +489,28 @@ def parse_and_display(line):
                                 for line in formatted_content.split('\n'):
                                     print(f"    {line}")
                     else:
-                        print(f"  {colorize(f'📤 Tool Result [{tool_id}...]:', '1;32')}")
+                        # Check if this is a thinking tool result
+                        is_thinking_result = False
+                        if isinstance(result_content, list) and len(result_content) > 0:
+                            first_item = result_content[0]
+                            if isinstance(first_item, dict) and first_item.get("type") == "text":
+                                text_content = first_item.get("text", "")
+                                # Detect thinking tool results by checking for common fields
+                                if "thoughtNumber" in text_content and "nextThoughtNeeded" in text_content:
+                                    is_thinking_result = True
+                        
+                        if is_thinking_result:
+                            # Minimal output for thinking results
+                            print(f"  {colorize(f'🧠 Thinking complete', '1;32')} [{tool_id}...]")
+                        else:
+                            print(f"  {colorize(f'📤 Tool Result [{tool_id}...]:', '1;32')}")
                         
                         # Format the result content nicely
                         if isinstance(result_content, list) and len(result_content) > 0 and isinstance(result_content[0], dict) and result_content[0].get("type") == "text":
+                            # Skip detailed output for thinking results
+                            if is_thinking_result:
+                                continue
+                            
                             # Handle list of content items (like tool results)
                             for item in result_content:
                                 if isinstance(item, dict) and item.get("type") == "text":
@@ -607,18 +673,23 @@ def parse_and_display(line):
                                 for line in formatted_search.split('\n'):
                                     print(f"    {line}")
                             else:
-                                # Regular string content handling
-                                if len(content_str) > 800:
-                                    # Show beginning and end
-                                    lines = content_str.split('\n')
-                                    if len(lines) > 20:
-                                        show_lines = lines[:10] + ['    ...'] + lines[-5:]
-                                        content_str = '\n'.join(show_lines)
-                                    else:
-                                        content_str = content_str[:800] + "..."
-                                
-                                for line in content_str.split('\n'):
-                                    print(f"    {line}")
+                                # For simple outputs (like numbers or single lines), show inline
+                                if '\n' not in content_str and len(content_str) < 100:
+                                    # Single line output - show inline
+                                    print(f"    → {colorize(content_str, '1;37')}")
+                                else:
+                                    # Regular string content handling
+                                    if len(content_str) > 800:
+                                        # Show beginning and end
+                                        lines = content_str.split('\n')
+                                        if len(lines) > 20:
+                                            show_lines = lines[:10] + ['    ...'] + lines[-5:]
+                                            content_str = '\n'.join(show_lines)
+                                        else:
+                                            content_str = content_str[:800] + "..."
+                                    
+                                    for line in content_str.split('\n'):
+                                        print(f"    {line}")
         
         elif msg_type == "result":
             # Final result of the prompt

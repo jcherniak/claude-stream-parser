@@ -62,13 +62,28 @@ The parser follows a simple stream processing pattern:
    - Graceful JSON parsing failures
    - Tool errors marked with ❌
 
-## Known Issues
+## Recent Updates
 
-### WebSearch Results Formatting
-WebSearch results currently display raw JSON arrays in the "Links:" section. The parser doesn't have specific handling for WebSearch tool results, so link arrays appear unformatted. Consider adding a formatter that:
-- Parses the "Links:" JSON array
-- Formats each link as a numbered list with title and URL
-- Example: `1. [Title](URL)`
+### Improved Tool Call Display (Latest)
+Tool calls now show cleaner, more readable output:
+- **Bash**: Commands shown inline with description as comment
+- **File tools** (Read/Write/Edit): Show file path inline
+- **Grep**: Shows pattern and search path inline
+- **TodoWrite**: Shows item count inline
+- **Thinking tools**: Shows thought preview inline
+
+### Improved Tool Result Display (Latest)
+Tool results are now formatted more cleanly:
+- **Single-line results**: Shown inline with arrow (→)
+- **Thinking results**: Minimal "🧠 Thinking complete" message
+- **WebSearch**: Formatted links with numbered list
+- **Multi-line content**: Properly indented with smart truncation
+
+### WebSearch Results Formatting (Fixed)
+WebSearch results now display beautifully formatted links:
+- Links section shows with 🔗 emoji
+- Each link numbered with title and URL
+- Section headers highlighted in color
 
 ## Development Tips
 
