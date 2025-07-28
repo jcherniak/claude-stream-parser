@@ -11,8 +11,12 @@ This is a Python stream parser that formats Claude's JSON output into human-read
 ### Running the Parser
 ```bash
 ./claude-stream-parser                    # Direct execution (file is executable)
-python3 claude-stream-parser             # Run with Python
+python3 claude-stream-parser             # Run with Python  
 some_command | ./claude-stream-parser    # Pipe Claude's JSON output
+
+# Options
+./claude-stream-parser --prefix-uptime   # Show system uptime with wall time
+./claude-stream-parser --help            # Show help message
 ```
 
 ### Testing
@@ -72,7 +76,13 @@ Tool calls now show cleaner, more readable output:
 - **TodoWrite**: Shows item count inline
 - **Thinking tools**: Shows thought preview inline
 
-### Improved Tool Result Display (Latest)
+### Command Line Options (Latest)
+- **--prefix-uptime**: Shows system uptime alongside wall time
+  - Normal: `[04:12:34]`
+  - With uptime: `[04:12:34, sys 00:12:34]`
+- **--help**: Display usage information
+
+### Improved Tool Result Display 
 Tool results are now formatted more cleanly:
 - **Single-line results**: Shown inline with arrow (→)
 - **Thinking results**: Minimal "🧠 Thinking complete" message

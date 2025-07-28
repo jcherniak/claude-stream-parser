@@ -4,6 +4,36 @@ import json
 import sys
 from datetime import datetime
 import re
+import argparse
+import time
+
+# Global variable to track uptime option
+SHOW_UPTIME = False
+START_TIME = time.time()
+
+def get_system_uptime():
+    """Get system uptime as a formatted string HH:MM:SS"""
+    try:
+        # Try to read from /proc/uptime (Linux)
+        with open('/proc/uptime', 'r') as f:
+            uptime_seconds = float(f.readline().split()[0])
+    except (FileNotFoundError, IndexError, ValueError):
+        # Fallback: use script runtime (not true system uptime, but useful)
+        uptime_seconds = time.time() - START_TIME
+    
+    hours = int(uptime_seconds // 3600)
+    minutes = int((uptime_seconds % 3600) // 60)
+    seconds = int(uptime_seconds % 60)
+    
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+def format_timestamp():
+    """Format timestamp with optional uptime"""
+    wall_time = datetime.now().strftime("%H:%M:%S")
+    if SHOW_UPTIME:
+        uptime = get_system_uptime()
+        return f"{wall_time}, sys {uptime}"
+    return wall_time
 
 def colorize(text, color_code, bold=False):
     """Add ANSI color codes if output is to terminal"""
@@ -405,7 +435,7 @@ def parse_and_display(line):
         data = json.loads(line.strip())
         
         msg_type = data.get("type", "unknown")
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = format_timestamp()
         
         if msg_type == "system":
             subtype = data.get("subtype", "")
@@ -771,6 +801,17 @@ def parse_and_display(line):
 
 def main():
     """Main function to read from stdin and process each line"""
+    global SHOW_UPTIME
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Format Claude JSON output into human-readable terminal output')
+    parser.add_argument('--prefix-uptime', action='store_true', 
+                       help='Prefix each message with system uptime in addition to wall time')
+    args = parser.parse_args()
+    
+    # Set global flag
+    SHOW_UPTIME = args.prefix_uptime
+    
     print(f"{colorize('📡 Claude Stream Parser', '1;36')} - Reading from stdin...")
     print(f"{colorize('═' * 60, '2;37')}")
     
