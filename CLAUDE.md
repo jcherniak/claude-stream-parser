@@ -76,6 +76,7 @@ Tool calls now show cleaner, more readable output:
 Tool results are now formatted more cleanly:
 - **Single-line results**: Shown inline with arrow (→)
 - **Thinking results**: Minimal "🧠 Thinking complete" message
+- **Read results**: Minimal "File read." message (no file content shown)
 - **WebSearch**: Formatted links with numbered list
 - **Multi-line content**: Properly indented with smart truncation
 

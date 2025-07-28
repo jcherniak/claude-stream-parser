@@ -491,6 +491,8 @@ def parse_and_display(line):
                     else:
                         # Check if this is a thinking tool result
                         is_thinking_result = False
+                        is_read_result = False
+                        
                         if isinstance(result_content, list) and len(result_content) > 0:
                             first_item = result_content[0]
                             if isinstance(first_item, dict) and first_item.get("type") == "text":
@@ -499,9 +501,19 @@ def parse_and_display(line):
                                 if "thoughtNumber" in text_content and "nextThoughtNeeded" in text_content:
                                     is_thinking_result = True
                         
+                        # Check if this is a Read tool result (string content with line numbers)
+                        if isinstance(result_content, str):
+                            # Check if it looks like file content with line numbers (e.g., "   1→" or "1234→")
+                            lines = result_content.split('\n')
+                            if len(lines) > 0 and '→' in lines[0] and any(char.isdigit() for char in lines[0].split('→')[0]):
+                                is_read_result = True
+                        
                         if is_thinking_result:
                             # Minimal output for thinking results
                             print(f"  {colorize(f'🧠 Thinking complete', '1;32')} [{tool_id}...]")
+                        elif is_read_result:
+                            # Minimal output for Read results
+                            print(f"  {colorize(f'📤 Tool Result [{tool_id}...]:', '1;32')} File read.")
                         else:
                             print(f"  {colorize(f'📤 Tool Result [{tool_id}...]:', '1;32')}")
                         
@@ -666,6 +678,10 @@ def parse_and_display(line):
                         else:
                             # Handle string content
                             content_str = str(result_content)
+                            
+                            # Skip detailed output for Read results
+                            if is_read_result:
+                                continue
                             
                             # Check if it's a WebSearch result
                             if "Web search results for query:" in content_str and "Links: [" in content_str:
