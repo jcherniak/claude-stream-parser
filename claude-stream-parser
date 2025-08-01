@@ -279,10 +279,27 @@ def format_message_content(content):
                 command = inputs.get("command", "")
                 desc = inputs.get("description", "")
                 if command:
-                    # Truncate very long commands
-                    if len(command) > 150:
-                        command = command[:147] + "..."
-                    parts.append(f"\n🔧 {colorize('Bash', '1;35')}: {colorize(command, '1;37')}")
+                    # For multi-line commands, show just the first meaningful line
+                    lines = command.strip().split('\n')
+                    first_line = lines[0].strip()
+                    
+                    # Skip comment lines to find the first command
+                    for line in lines:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            first_line = line
+                            break
+                    
+                    # Truncate if still too long
+                    if len(first_line) > 80:
+                        first_line = first_line[:77] + "..."
+                    
+                    # Show line count for multi-line scripts
+                    if len(lines) > 1:
+                        parts.append(f"\n🔧 {colorize('Bash', '1;35')}: {colorize(first_line, '1;37')} {colorize(f'[+{len(lines)-1} lines]', '2;37')}")
+                    else:
+                        parts.append(f"\n🔧 {colorize('Bash', '1;35')}: {colorize(first_line, '1;37')}")
+                    
                     if desc:
                         parts.append(f" {colorize(f'# {desc}', '2;37')}")
                 else:

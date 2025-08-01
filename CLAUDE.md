@@ -70,7 +70,7 @@ The parser follows a simple stream processing pattern:
 
 ### Improved Tool Call Display (Latest)
 Tool calls now show cleaner, more readable output:
-- **Bash**: Commands shown inline with description as comment
+- **Bash**: First command line shown with `[+N lines]` for multi-line scripts
 - **File tools** (Read/Write/Edit): Show file path inline
 - **Grep**: Shows pattern and search path inline
 - **TodoWrite**: Shows item count inline
